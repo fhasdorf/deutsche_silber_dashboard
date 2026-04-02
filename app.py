@@ -102,4 +102,76 @@ with col2:
             uebersetzt = [mineral_erweitert.get(teil.strip(), teil.strip()) for teil in teile]
             return ", ".join(uebersetzt)
 
-        anzeige_detail_df['Ziel-
+        anzeige_detail_df['Ziel-Mineralien'] = anzeige_detail_df['Ziel-Mineralien'].apply(uebersetze_komma_liste)
+        st.dataframe(anzeige_detail_df, use_container_width=True, hide_index=True)
+
+# --- 7. DASHBOARD BEREICH (UNTEN): MINERALIEN & LIZENZARTEN ---
+st.markdown("---") 
+st.subheader("⛏️ Portfolio-Analyse: Erze & Lizenzstatus")
+
+df_minerals = df_lizenzen.copy()
+df_minerals['Mineral'] = df_minerals['Mineral'].fillna('Unbekannt')
+df_minerals['Mineral'] = df_minerals['Mineral'].astype(str).str.split(',')
+df_exploded = df_minerals.explode('Mineral')
+df_exploded['Mineral'] = df_exploded['Mineral'].str.strip() 
+
+# Jetzt kennt Python mineral_erweitert hier unten problemlos!
+df_exploded['Mineral'] = df_exploded['Mineral'].replace(mineral_erweitert)
+
+if ausgewaehlter_inhaber != "Alle anzeigen":
+    df_exploded = df_exploded[df_exploded['Rettighetshaver'] == ausgewaehlter_inhaber]
+    df_types = df_lizenzen[df_lizenzen['Rettighetshaver'] == ausgewaehlter_inhaber]
+else:
+    df_types = df_lizenzen
+
+col3, col4 = st.columns(2)
+
+with col3:
+    st.write(f"**Gesuchte Mineralien** ({ausgewaehlter_inhaber})")
+    mineral_counts = df_exploded['Mineral'].value_counts().reset_index()
+    mineral_counts.columns = ['Mineral', 'Anzahl Nennungen']
+    
+    fig_minerals = px.pie(
+        mineral_counts.head(10),
+        values='Anzahl Nennungen', 
+        names='Mineral', 
+        hole=0.4,
+        color_discrete_sequence=px.colors.sequential.Blues_r
+    )
+    st.plotly_chart(fig_minerals, use_container_width=True)
+
+with col4:
+    st.write(f"**Lizenzstatus** ({ausgewaehlter_inhaber})")
+    type_counts = df_types['Rettighetstype'].value_counts().reset_index()
+    type_counts.columns = ['Lizenzart', 'Anzahl']
+    
+    type_counts['Lizenzart'] = type_counts['Lizenzart'].replace({
+        'UNDERSØKELSESRETT': 'Exploration (Untersuchung)',
+        'UNDERSOEKELSESRETT': 'Exploration (Untersuchung)',
+        'UTVINNINGSRETT': 'Abbau (Gewinnung)'
+    })
+    
+    fig_types = px.bar(
+        type_counts, 
+        x='Anzahl', 
+        y='Lizenzart', 
+        orientation='h',
+        color='Lizenzart',
+        color_discrete_sequence=['#3186cc', '#ff9900']
+    )
+    fig_types.update_layout(showlegend=False)
+    st.plotly_chart(fig_types, use_container_width=True)
+
+# --- 8. FOOTER ---
+st.markdown("---")
+st.markdown(
+    """
+    <div style="text-align: center; font-size: 14px; color: #6c757d;">
+        <b>© 2026 Geodaten-Analyse | Frank Hasdorf</b><br>
+        <i>Datenquelle: Direktoratet for mineralforvaltning (Norwegen)</i><br>
+        <br>
+        <span style="font-size: 12px;">Entwickelt mit 🐍 Python & 👑 Streamlit</span>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
