@@ -10,7 +10,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# 1. Seiten-Konfiguration (Muss ganz oben stehen)
+# 1. Seiten-Konfiguration (immer oben, bitte)
 st.set_page_config(page_title="Mitbewerber Analyse | Deutsche Silber SE", layout="wide")
 
 ## 2. Daten laden (mit Cache für maximale Geschwindigkeit)
