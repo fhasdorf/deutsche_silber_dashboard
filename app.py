@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 # @Author: Frank Hasdorf
+@ Project Deutsche Silber SE
+# @Date:   02-04-2026 15:11:55
+# @Last Modified by:   Frank Hasdorf
+# @Last Modified time: 02-04-2026 17:44:07
 
 import streamlit as st
 import pandas as pd
