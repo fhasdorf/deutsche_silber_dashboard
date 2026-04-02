@@ -98,4 +98,8 @@ with col2:
 
         # Funktion zur Übersetzung von Komma-Listen in der Tabelle
         def uebersetze_komma_liste(mineral_string):
-            if pd.isna(mineral_string):
+            if pd.isna(mineral_string): 
+                return "Unbekannt"
+            teile = str(mineral_string).split(',')
+            uebersetzt = [mineral_erweitert.get(teil.strip(), teil.strip()) for teil in teile]
+            return ", ".join(uebersetzt)
