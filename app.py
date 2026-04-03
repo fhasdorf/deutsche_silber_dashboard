@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # @Author: Frank Hasdorf
+# @Project: Deutsche Silber SE
 # @Last Modified by:   Frank Hasdorf
 
 import streamlit as st
@@ -165,40 +166,19 @@ with col4:
     fig_types.update_layout(showlegend=False)
     st.plotly_chart(fig_types, use_container_width=True)
 
-
-# --- 8. WHITE SPOT ANALYSE & INTERAKTIVE KARTE ---
+# --- 8. WHITE SPOT ANALYSE & INTERAKTIVE KARTE (Cloud-Ready mit GeoJSON) ---
 st.markdown("---")
 st.header("🗺️ White Spot Analyse & Competitor Map")
 
-# Funktion zum Übersetzen der norwegischen Layer in der Sidebar
+# --- LAYER DEFINIEREN (Die extrahierten GeoJSON-Dateien) ---
+verfuegbare_layer = ['MalmRegistrering_flate', 'MalmForekomst_flate']
+
 def uebersetze_layer(layer_name):
-    uebersetzung = layer_name
     ersetzungen = {
-        'Malm': 'Erz',
-        'Industrimineral': 'Industrieminerale',
-        'Naturstein': 'Naturstein',
-        'ByggeRastoff': 'Baustoffe',
-        'Grus': 'Kies',
-        'Forekomst': '-Vorkommen',
-        'Registrering': '-Registrierungen',
-        '_flate': ' (Flächen)',
-        '_punkt': ' (Punkte)'
+        'MalmRegistrering_flate': 'Erz-Registrierungen (Flächen)',
+        'MalmForekomst_flate': 'Erz-Vorkommen (Flächen)'
     }
-    for nor, ger in ersetzungen.items():
-        uebersetzung = uebersetzung.replace(nor, ger)
-    return f"{uebersetzung} [{layer_name}]"
-
-@st.cache_data
-def get_gdb_layers():
-    gdb_pfad = "geodaten/Mineralressurser.gdb"
-    try:
-        from pyogrio import list_layers
-        layer_info_raw = list_layers(gdb_pfad)
-        return [layer[0] for layer in layer_info_raw]
-    except Exception:
-        return []
-
-verfuegbare_layer = get_gdb_layers()
+    return ersetzungen.get(layer_name, layer_name)
 
 # --- SIDEBAR ERWEITERUNG ---
 st.sidebar.markdown("---")
@@ -206,19 +186,16 @@ st.sidebar.subheader("Karten-Optionen")
 show_competitors = st.sidebar.checkbox("Reale Geo-Polygone anzeigen", value=False)
 
 gewaehlter_layer = None
-if show_competitors and verfuegbare_layer:
-    start_index = verfuegbare_layer.index('MalmRegistrering_flate') if 'MalmRegistrering_flate' in verfuegbare_layer else 0
-    
+if show_competitors:
     gewaehlter_layer = st.sidebar.selectbox(
         "Welchen Geodaten-Layer laden?", 
         verfuegbare_layer, 
-        index=start_index,
         format_func=uebersetze_layer
     )
 
 show_infrastructure = st.sidebar.checkbox("Infrastruktur (Häfen) anzeigen", value=False)
 
-# 1. Daten und Proxy-Scoring 
+# 1. Daten und Proxy-Scoring (Unsere White Spots)
 silber_proxies = ['Blei', 'Zink', 'Kupfer', 'Antimon', 'Arsen', 'Galenit', 'Sphalerit']
 
 data_spots = {
@@ -242,35 +219,30 @@ df_spots[['Proxy_Score', 'Gematchte_Proxies']] = df_spots['Historische_Funde'].a
     lambda x: pd.Series(berechne_proxy_score(x))
 )
 
-# 2. Geodatabase (.gdb) laden basierend auf Auswahl
+# 2. Leichte GeoJSON laden 
 @st.cache_data
 def load_geodata(layer_name):
     if not layer_name: return None
-    gdb_pfad = "geodaten/Mineralressurser.gdb" 
+    
+   
+    geojson_pfad = f"geodaten/{layer_name}.geojson" 
+    
     try:
-        gdf = gpd.read_file(gdb_pfad, layer=layer_name, engine="pyogrio")
+        gdf = gpd.read_file(geojson_pfad)
         
-        # 1. Sicherheits-Filter: Leere Geometrien ("Kaputte Daten") herauswerfen
-        gdf = gdf.dropna(subset=['geometry'])
-        
-        # 2. In das Web-Karten Format (Lat/Lon) umwandeln
-        gdf = gdf.to_crs(epsg=4326)
-        
-        # 3. JSON-sicher machen (verhindert Abstürze durch Datumsformate)
         for col in gdf.columns:
             if col != 'geometry':
                 gdf[col] = gdf[col].astype(str)
                 
         return gdf
     except Exception as e:
-        st.error(f"Fehler beim Laden des Layers {layer_name}: {e}")
+        st.error(f"Fehler beim Laden der Datei {geojson_pfad}: {e}")
         return None
 
 gdf_lizenzen = load_geodata(gewaehlter_layer) if show_competitors else None
 
-# Erfolgsmeldung in der Sidebar anzeigen, wenn Daten erfolgreich geladen wurden
 if show_competitors and gdf_lizenzen is not None:
-    st.sidebar.success(f"✅ {len(gdf_lizenzen)} Geo-Objekte erfolgreich geladen!")
+    st.sidebar.success(f"✅ {len(gdf_lizenzen)} Geo-Objekte blitzschnell geladen!")
 
 # 3. KARTE INITIALISIEREN
 m = folium.Map(location=[61.5, 8.5], zoom_start=6, tiles='OpenStreetMap')
@@ -296,7 +268,7 @@ for idx, row in df_spots.iterrows():
     ).add_to(fg_spots)
 fg_spots.add_to(m)
 
-# LAYER: Reale Konkurrenz-Polygone aus der Datenbank
+# LAYER: Reale Konkurrenz-Polygone aus GeoJSON
 if show_competitors and gdf_lizenzen is not None and not gdf_lizenzen.empty:
     fg_comp = folium.FeatureGroup(name=f"Geo-Layer: {gewaehlter_layer}")
     folium.GeoJson(
@@ -336,7 +308,7 @@ with col_map2:
     st.info("""
     **🗺️ Kartenlegende:** ⭐ **Rote Sterne:** Unsere White Spots (Targets)  
     🟢 **Grüne Zonen:** 30 km strategischer Explorationsradius  
-    🟧 **Orange Flächen:** Reale Konkurrenz-Lizenzen (aus der Geodatabase)  
+    🟧 **Orange Flächen:** Reale Erzvorkommen (aus norwegischen Geodaten)  
     🛣️ **Autobahnen / Bahnstrecken:** Gelbe & gestrichelte Linien (OpenStreetMap)
     """)
 
