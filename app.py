@@ -161,4 +161,4 @@ with cm2:
 
 # --- 9. FOOTER ---
 st.markdown("---")
-st.markdown("<div style='text-align: center; font-size: 12px; color: grey;'>© 2026 Deutsche Silber SE | Frank Hasdorf</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; font-size: 12px; color: grey;'>© 2026 Deutsche Silber SE | Frank Hasdorf | Built with: Python Streamlit Geopandas</div>", unsafe_allow_html=True)
