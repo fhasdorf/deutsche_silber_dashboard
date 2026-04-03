@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
 # @Author: Frank Hasdorf
-# @ Project Deutsche Silber SE
-# @Date:   02-04-2026 15:11:55
 # @Last Modified by:   Frank Hasdorf
-# @Last Modified time: 02-04-2026 17:44:07
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import folium
+from streamlit_folium import st_folium
+import math
+import geopandas as gpd
 
 # --- 1. SEITEN-KONFIGURATION ---
 st.set_page_config(page_title="Mitbewerber Analyse | Deutsche Silber SE", layout="wide")
 
-# --- 2. DATEN LADEN & BEREINIGEN ---
+# --- 2. DATEN LADEN & BEREINIGEN (CSV) ---
 @st.cache_data
 def load_data():
     csv_pfad = "bergrettigheter.csv" 
@@ -26,7 +27,7 @@ def load_data():
         df['Areal_km2'] = df['Areal_m2'] / 1_000_000
         return df
     except Exception as e:
-        st.error(f"Fehler beim Laden der Daten: {e}")
+        st.error(f"Fehler beim Laden der CSV-Daten: {e}")
         return pd.DataFrame()
 
 df_lizenzen = load_data()
@@ -43,8 +44,7 @@ st.sidebar.header("Filter")
 alle_inhaber = sorted(df_lizenzen['Rettighetshaver'].dropna().unique().tolist())
 ausgewaehlter_inhaber = st.sidebar.selectbox("Suche nach spezifischem Unternehmen:", ["Alle anzeigen"] + alle_inhaber)
 
-# --- 4. ZENTRALES WÖRTERBUCH (Der Bugfix!) ---
-# Das Wörterbuch muss hier oben stehen, damit die ganze App es kennt.
+# --- 4. ZENTRALES WÖRTERBUCH ---
 mineral_erweitert = {
     'Kobber': 'Kupfer', 'Gull': 'Gold', 'Sølv': 'Silber', 'Sink': 'Zink',
     'Bly': 'Blei', 'Kobolt': 'Kobalt', 'Nikkel': 'Nickel', 'Platina': 'Platin',
@@ -119,7 +119,6 @@ df_minerals['Mineral'] = df_minerals['Mineral'].astype(str).str.split(',')
 df_exploded = df_minerals.explode('Mineral')
 df_exploded['Mineral'] = df_exploded['Mineral'].str.strip() 
 
-# Jetzt kennt Python mineral_erweitert hier unten problemlos!
 df_exploded['Mineral'] = df_exploded['Mineral'].replace(mineral_erweitert)
 
 if ausgewaehlter_inhaber != "Alle anzeigen":
@@ -166,7 +165,182 @@ with col4:
     fig_types.update_layout(showlegend=False)
     st.plotly_chart(fig_types, use_container_width=True)
 
-# --- 8. FOOTER ---
+
+# --- 8. WHITE SPOT ANALYSE & INTERAKTIVE KARTE ---
+st.markdown("---")
+st.header("🗺️ White Spot Analyse & Competitor Map")
+
+# Funktion zum Übersetzen der norwegischen Layer in der Sidebar
+def uebersetze_layer(layer_name):
+    uebersetzung = layer_name
+    ersetzungen = {
+        'Malm': 'Erz',
+        'Industrimineral': 'Industrieminerale',
+        'Naturstein': 'Naturstein',
+        'ByggeRastoff': 'Baustoffe',
+        'Grus': 'Kies',
+        'Forekomst': '-Vorkommen',
+        'Registrering': '-Registrierungen',
+        '_flate': ' (Flächen)',
+        '_punkt': ' (Punkte)'
+    }
+    for nor, ger in ersetzungen.items():
+        uebersetzung = uebersetzung.replace(nor, ger)
+    return f"{uebersetzung} [{layer_name}]"
+
+@st.cache_data
+def get_gdb_layers():
+    gdb_pfad = "geodaten/Mineralressurser.gdb"
+    try:
+        from pyogrio import list_layers
+        layer_info_raw = list_layers(gdb_pfad)
+        return [layer[0] for layer in layer_info_raw]
+    except Exception:
+        return []
+
+verfuegbare_layer = get_gdb_layers()
+
+# --- SIDEBAR ERWEITERUNG ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("Karten-Optionen")
+show_competitors = st.sidebar.checkbox("Reale Geo-Polygone anzeigen", value=False)
+
+gewaehlter_layer = None
+if show_competitors and verfuegbare_layer:
+    start_index = verfuegbare_layer.index('MalmRegistrering_flate') if 'MalmRegistrering_flate' in verfuegbare_layer else 0
+    
+    gewaehlter_layer = st.sidebar.selectbox(
+        "Welchen Geodaten-Layer laden?", 
+        verfuegbare_layer, 
+        index=start_index,
+        format_func=uebersetze_layer
+    )
+
+show_infrastructure = st.sidebar.checkbox("Infrastruktur (Häfen) anzeigen", value=False)
+
+# 1. Daten und Proxy-Scoring 
+silber_proxies = ['Blei', 'Zink', 'Kupfer', 'Antimon', 'Arsen', 'Galenit', 'Sphalerit']
+
+data_spots = {
+    'Spot_Name': ['Stordø', 'Ulriksdal', 'Nyseter', 'Gravdal'],
+    'Lat': [59.78, 63.45, 60.55, 60.38], 
+    'Lon': [5.50, 10.12, 9.85, 5.32],
+    'Historische_Funde': ['Kupfer, Zink, Pyrit', 'Eisen, Kupfer', 'Zink, Blei, Silber', 'Kupfer, Zink, Blei']
+}
+df_spots = pd.DataFrame(data_spots)
+
+def berechne_proxy_score(funde):
+    score = 0
+    gefundene = []
+    for p in silber_proxies:
+        if p.lower() in funde.lower():
+            score += 1
+            gefundene.append(p)
+    return score, ", ".join(gefundene)
+
+df_spots[['Proxy_Score', 'Gematchte_Proxies']] = df_spots['Historische_Funde'].apply(
+    lambda x: pd.Series(berechne_proxy_score(x))
+)
+
+# 2. Geodatabase (.gdb) laden basierend auf Auswahl
+@st.cache_data
+def load_geodata(layer_name):
+    if not layer_name: return None
+    gdb_pfad = "geodaten/Mineralressurser.gdb" 
+    try:
+        gdf = gpd.read_file(gdb_pfad, layer=layer_name, engine="pyogrio")
+        
+        # 1. Sicherheits-Filter: Leere Geometrien ("Kaputte Daten") herauswerfen
+        gdf = gdf.dropna(subset=['geometry'])
+        
+        # 2. In das Web-Karten Format (Lat/Lon) umwandeln
+        gdf = gdf.to_crs(epsg=4326)
+        
+        # 3. JSON-sicher machen (verhindert Abstürze durch Datumsformate)
+        for col in gdf.columns:
+            if col != 'geometry':
+                gdf[col] = gdf[col].astype(str)
+                
+        return gdf
+    except Exception as e:
+        st.error(f"Fehler beim Laden des Layers {layer_name}: {e}")
+        return None
+
+gdf_lizenzen = load_geodata(gewaehlter_layer) if show_competitors else None
+
+# Erfolgsmeldung in der Sidebar anzeigen, wenn Daten erfolgreich geladen wurden
+if show_competitors and gdf_lizenzen is not None:
+    st.sidebar.success(f"✅ {len(gdf_lizenzen)} Geo-Objekte erfolgreich geladen!")
+
+# 3. KARTE INITIALISIEREN
+m = folium.Map(location=[61.5, 8.5], zoom_start=6, tiles='OpenStreetMap')
+
+# LAYER: White Spots & 30-km-Radius
+fg_spots = folium.FeatureGroup(name="White Spots (Targets)")
+for idx, row in df_spots.iterrows():
+    folium.Marker(
+        location=[row['Lat'], row['Lon']],
+        popup=f"<b>{row['Spot_Name']}</b><br>Score: {row['Proxy_Score']}/7<br>Proxies: {row['Gematchte_Proxies']}",
+        tooltip=f"🎯 Target: {row['Spot_Name']}",
+        icon=folium.Icon(color='red', icon='star')
+    ).add_to(fg_spots)
+    
+    folium.Circle(
+        location=[row['Lat'], row['Lon']],
+        radius=30000, 
+        color='green',
+        weight=2,
+        fill=True,
+        fill_opacity=0.05,
+        tooltip="30 km Explorationsradius"
+    ).add_to(fg_spots)
+fg_spots.add_to(m)
+
+# LAYER: Reale Konkurrenz-Polygone aus der Datenbank
+if show_competitors and gdf_lizenzen is not None and not gdf_lizenzen.empty:
+    fg_comp = folium.FeatureGroup(name=f"Geo-Layer: {gewaehlter_layer}")
+    folium.GeoJson(
+        gdf_lizenzen,
+        name="Lizenzen",
+        style_function=lambda feature: {
+            'fillColor': 'orange',
+            'color': 'darkorange',
+            'weight': 1,
+            'fillOpacity': 0.4,
+        }
+    ).add_to(fg_comp)
+    fg_comp.add_to(m)
+
+# LAYER: Infrastruktur
+if show_infrastructure:
+    fg_infra = folium.FeatureGroup(name="Logistik")
+    haefen = {'Hafen Bergen': [60.39, 5.32], 'Hafen Trondheim': [63.44, 10.40], 'Hafen Mo i Rana': [66.31, 14.14]}
+    for name, coords in haefen.items():
+        folium.Marker(location=coords, popup=name, icon=folium.Icon(color='gray', icon='ship', prefix='fa')).add_to(fg_infra)
+    fg_infra.add_to(m)
+
+folium.LayerControl().add_to(m)
+
+# 4. Anzeige in Streamlit
+col_map1, col_map2 = st.columns([1, 2])
+
+with col_map1:
+    st.subheader("Target-Bewertung")
+    df_display = df_spots[['Spot_Name', 'Proxy_Score', 'Gematchte_Proxies']].sort_values(by='Proxy_Score', ascending=False)
+    st.dataframe(df_display, use_container_width=True, hide_index=True)
+    st.info("Der grüne 30-km-Radius zeigt unsere strategische Pufferzone. Lizenzen innerhalb dieses Bereichs konkurrieren um dieselbe geologische Formation und Infrastruktur.")
+
+with col_map2:
+    st_folium(m, width=800, height=500, returned_objects=[])
+    
+    st.info("""
+    **🗺️ Kartenlegende:** ⭐ **Rote Sterne:** Unsere White Spots (Targets)  
+    🟢 **Grüne Zonen:** 30 km strategischer Explorationsradius  
+    🟧 **Orange Flächen:** Reale Konkurrenz-Lizenzen (aus der Geodatabase)  
+    🛣️ **Autobahnen / Bahnstrecken:** Gelbe & gestrichelte Linien (OpenStreetMap)
+    """)
+
+# --- 9. FOOTER ---
 st.markdown("---")
 st.markdown(
     """
