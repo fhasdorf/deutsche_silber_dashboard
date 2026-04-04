@@ -175,4 +175,12 @@ with cm2:
 
 # --- 9. FOOTER ---
 st.markdown("---")
-st.markdown("<div style='text-align: center; font-size: 12px; color: grey;'>© 2026 Deutsche Silber SE | Frank Hasdorf</div>", unsafe_allow_html=True)
+st.markdown("""
+    <div style='text-align: center; font-size: 13px; color: #888888; padding-top: 20px; border-top: 1px solid #eeeeee;'>
+        © 2026 Frank Hasdorf für <b>MERIDIANA CAPITAL GROUP GMBH</b><br>
+        <span style='font-size: 11px;'>
+            <b>Tech Stack:</b> Python (Streamlit, Geopandas, Folium, Plotly) | <b>Deployment:</b> GitHub Cloud<br>
+            <b>Datenquelle:</b> Direktoratet for mineralforvaltning (DirMin) & NGU Norwegen
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
