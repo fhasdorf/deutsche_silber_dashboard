@@ -1,19 +1,7 @@
+
 # -*- coding: utf-8 -*-
 # @Author: Frank Hasdorf
-# @Date:   02-04-2026 15:11:55
-# @Last Modified by:   Frank Hasdorf
-# @Last Modified time: 03-04-2026 17:48:10
-
-
-def main():
-    print("Hello, World!")
-
-
-if __name__ == "__main__":
-    main()
-# -*- coding: utf-8 -*-
-# @Author: Frank Hasdorf
-# @Project: Deutsche Silber SE - Professional Business Intelligence
+# @Project: Deutsche Silber SE - Professional Business Intelligence Dashboard
 
 import streamlit as st
 import pandas as pd
@@ -69,7 +57,7 @@ mitbewerber_stats = df_lizenzen.groupby('Rettighetshaver')['Areal_km2'].sum().re
 top_10_player = mitbewerber_stats.sort_values(by='Areal_km2', ascending=False).head(10)
 
 # --- 6. DASHBOARD (OBEN) ---
-st.title("📊 Explorationsmarkt Norwegen: Mitbewerber-Analyse")
+st.header("📊 Explorationsmarkt Norwegen: Mitbewerber-Analyse")
 c1, c2 = st.columns(2)
 
 with c1:
@@ -83,7 +71,8 @@ with c1:
         m1.metric("Lizenzen", len(df_filtered))
         m2.metric("Gesamtfläche", f"{flaeche:.2f} km²")
         avg_f = mitbewerber_stats['Areal_km2'].mean()
-        st.plotly_chart(px.bar(pd.DataFrame({'Kat': [ausgewaehlter_inhaber, 'Markt-Ø'], 'km2': [flaeche, avg_f]}), x='Kat', y='km2', color='Kat'), use_container_width=True)
+        comp_df = pd.DataFrame({'Kat': [ausgewaehlter_inhaber, 'Markt-Ø'], 'km2': [flaeche, avg_f]})
+        st.plotly_chart(px.bar(comp_df, x='Kat', y='km2', color='Kat', color_discrete_map={ausgewaehlter_inhaber: '#3186cc', 'Markt-Ø': 'grey'}), use_container_width=True)
 
 with c2:
     st.subheader("🔍 Projekt-Details")
@@ -113,6 +102,17 @@ df_spots[['Proxy_Score', 'Gematchte_Proxies']] = df_spots['Historische_Funde'].a
 st.markdown("---")
 st.header("🗺️ White Spot Analyse & Competitor Map")
 
+layer_namen_dict = {
+    'konkurrenz_claims': '⚠️ Bestehende Bergbaurechte (Wettbewerber)',
+    'MalmRegistrering_flate': '🔍 Geologische Erst-Registrierungen',
+    'MalmForekomst_flate': '💎 Bestätigte Erzvorkommen'
+}
+
+def uebersetze_layer(technischer_name):
+    return layer_namen_dict.get(technischer_name, technischer_name)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Karten-Optionen")
 show_geo = st.sidebar.checkbox("Reale Flächen (Geo-Polygone) laden", value=False)
 
 @st.cache_data
@@ -127,7 +127,7 @@ def load_geodata(layer_name):
 
 m = folium.Map(location=[61.5, 8.5], zoom_start=6)
 
-# White Spots (Targets) mit dem 30km Radius
+# White Spots (Targets)
 fg_spots = folium.FeatureGroup(name="Unsere Targets")
 for _, row in df_spots.iterrows():
     folium.Marker(
@@ -140,25 +140,39 @@ for _, row in df_spots.iterrows():
 fg_spots.add_to(m)
 
 if show_geo:
-    lay = st.sidebar.selectbox("Layer:", ['konkurrenz_claims', 'MalmRegistrering_flate', 'MalmForekomst_flate'])
+    lay = st.sidebar.selectbox("Daten-Ebene auswählen:", list(layer_namen_dict.keys()), format_func=uebersetze_layer)
     gdf = load_geodata(lay)
+    
     if gdf is not None and not gdf.empty:
-        # Element 29 Fix (Karten-Filter)
         if lay == 'konkurrenz_claims' and ausgewaehlter_inhaber != "Alle anzeigen":
             c_col = [c for c in gdf.columns if c.lower() in ['rettighetsh', 'rettighethaver']]
             if c_col:
                 gdf = gdf[gdf[c_col[0]].str.lower().str.contains(ausgewaehlter_inhaber.lower(), na=False)]
-        folium.GeoJson(gdf, style_function=lambda x: {'fillColor': 'orange', 'color': 'red', 'weight': 1}).add_to(m)
+        
+        # Tooltip & Popup UPDATE: Jetzt mit Inhaber
+        tooltip, popup = None, None
+        if lay == 'konkurrenz_claims':
+            tooltip = folium.GeoJsonTooltip(
+                fields=['rettighethaver', 'rettighetnr', 'rettighetnavn'], 
+                aliases=['Inhaber:', 'Lizenz-Nr:', 'Projekt:']
+            )
+            popup = folium.GeoJsonPopup(
+                fields=['rettighethaver', 'rettighetnr', 'rettighetnavn', 'mineraltype'], 
+                aliases=['Inhaber:', 'Nummer:', 'Projekt:', 'Mineralien:']
+            )
+        
+        farbe = 'red' if lay == 'konkurrenz_claims' else 'orange'
+        folium.GeoJson(gdf, tooltip=tooltip, popup=popup, style_function=lambda x: {
+            'fillColor': farbe, 'color': 'darkred' if farbe == 'red' else 'darkorange', 'weight': 1, 'fillOpacity': 0.4
+        }).add_to(m)
 
-# Anzeige: Tabelle links, Karte rechts
 cm1, cm2 = st.columns([1, 2])
 with cm1:
     st.subheader("Target-Bewertung")
     st.dataframe(df_spots[['Spot_Name', 'Proxy_Score', 'Gematchte_Proxies']].sort_values(by='Proxy_Score', ascending=False), use_container_width=True, hide_index=True)
-    st.info("Der grüne 30-km-Radius zeigt unsere strategische Pufferzone.")
 with cm2:
     st_folium(m, width=800, height=500, returned_objects=[])
 
 # --- 9. FOOTER ---
 st.markdown("---")
-st.markdown("<div style='text-align: center; font-size: 12px; color: grey;'>© 2026 Deutsche Silber SE | Frank Hasdorf | Built with: Python Streamlit Geopandas</div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; font-size: 12px; color: grey;'>© 2026 Deutsche Silber SE | Frank Hasdorf</div>", unsafe_allow_html=True)
